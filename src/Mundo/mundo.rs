@@ -347,7 +347,7 @@ fn atacar_enemigo(
 fn mover_flechas(
     tiempo: Res<Time>,
     mut commands: Commands,
-    mut flechas: Query<(Entity, &mut Flecha, &mut Transform)>,
+    mut flechas: Query<(Entity, &mut Flecha, &mut Transform), Without<Enemigo>>,
     mut enemigos: Query<(&Transform, &mut Enemigo)>,
     mut progreso: ResMut<Progreso>,
     mut vida: ResMut<VidaJugador>,
