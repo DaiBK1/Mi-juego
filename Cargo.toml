@@ -1,0 +1,15 @@
+[package]
+name = "mi_juego"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bevy = "0.20.0"
+ron = "0.12.2"
+serde = { version = "1.0.229", features = ["derive"] }
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

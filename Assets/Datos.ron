@@ -1,0 +1,9 @@
+(
+    flecha_precio_oro: 10,
+    flechas_por_compra: 5,
+    flechas_por_fabrica: 5,
+    flecha_receta: [
+        (Madera, 2),
+        (Hierro, 1),
+    ],
+)
