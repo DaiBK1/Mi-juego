@@ -29,7 +29,9 @@ const COOLDOWN_ENEMIGO: f32 = 1.5;
 pub(crate) const EXP_ENEMIGO: u32 = 40;
 pub(crate) const EXP_POR_NIVEL: u32 = 100;
 const VIDA_POR_NIVEL: u32 = 10;
-const TIEMPO_RESPAWN: f32 = 30.0;
+// TODO: provisional respawn times
+const RESPAWN_RECURSO: f32 = 10.0;
+const RESPAWN_ENEMIGO: f32 = 30.0;
 
 pub struct MundoPlugin;
 
@@ -45,7 +47,7 @@ impl Plugin for MundoPlugin {
                     aplicar_disparo,
                     mover_flechas,
                     atacar_enemigo,
-                    gestionar_respawn,
+                    gestionar_respawn_individual,
                 ).run_if(in_state(Screen::Gameplay).and_then(in_state(Menu::None))),
             );
     }
@@ -54,6 +56,7 @@ impl Plugin for MundoPlugin {
 #[derive(Component)]
 struct Recolectable {
     material: Material,
+    respawn: Timer,
 }
 
 #[derive(Component)]
@@ -61,6 +64,8 @@ struct Enemigo {
     vida: u32,
     vida_max: u32,
     ataque: Timer,
+    respawn: Timer,
+    posicion_original: Vec2,
 }
 
 /// Flecha lanzada por el arco.
@@ -76,8 +81,6 @@ struct Flecha {
 struct Spawns {
     recolectables: Vec<(Material, Vec2, Vec2, Color, String)>,
     enemigos: Vec<Vec2>,
-    timer: Timer,
-    needs_respawn: bool,
 }
 
 impl Default for Spawns {
@@ -85,12 +88,16 @@ impl Default for Spawns {
         Self {
             recolectables: vec![
                 (Material::Madera, Vec2::new(-200.0, 160.0), Vec2::new(40.0, 60.0), Color::srgb(0.15, 0.45, 0.20), "Arbol (Madera)".to_string()),
+                (Material::Madera, Vec2::new(-250.0, 200.0), Vec2::new(40.0, 60.0), Color::srgb(0.15, 0.45, 0.20), "Arbol (Madera)".to_string()),
+                (Material::Madera, Vec2::new(-150.0, 120.0), Vec2::new(40.0, 60.0), Color::srgb(0.15, 0.45, 0.20), "Arbol (Madera)".to_string()),
                 (Material::Hierro, Vec2::new(60.0, 120.0), Vec2::new(44.0, 34.0), Color::srgb(0.45, 0.48, 0.55), "Mineral (Hierro)".to_string()),
+                (Material::Hierro, Vec2::new(100.0, 80.0), Vec2::new(44.0, 34.0), Color::srgb(0.45, 0.48, 0.55), "Mineral (Hierro)".to_string()),
+                (Material::Hierro, Vec2::new(20.0, 160.0), Vec2::new(44.0, 34.0), Color::srgb(0.45, 0.48, 0.55), "Mineral (Hierro)".to_string()),
                 (Material::Cuero, Vec2::new(-120.0, 40.0), Vec2::new(48.0, 30.0), Color::srgb(0.55, 0.36, 0.20), "Animal (Cuero)".to_string()),
+                (Material::Cuero, Vec2::new(-80.0, 80.0), Vec2::new(48.0, 30.0), Color::srgb(0.55, 0.36, 0.20), "Animal (Cuero)".to_string()),
+                (Material::Cuero, Vec2::new(-160.0, 0.0), Vec2::new(48.0, 30.0), Color::srgb(0.55, 0.36, 0.20), "Animal (Cuero)".to_string()),
             ],
             enemigos: vec![Vec2::new(170.0, 40.0)],
-            timer: Timer::from_seconds(TIEMPO_RESPAWN, TimerMode::Once),
-            needs_respawn: false,
         }
     }
 }
@@ -103,16 +110,7 @@ fn preparar_mundo(mut commands: Commands, spawns: ResMut<Spawns>) {
     }
 
     for posicion in &spawns.enemigos {
-        commands.spawn((
-            Sprite::from_color(Color::srgb(0.70, 0.15, 0.15), Vec2::new(48.0, 64.0)),
-            Transform::from_xyz(posicion.x, posicion.y, 1.0),
-            Enemigo {
-                vida: VIDA_ENEMIGO,
-                vida_max: VIDA_ENEMIGO,
-                ataque: Timer::from_seconds(COOLDOWN_ENEMIGO, TimerMode::Repeating),
-            },
-            DespawnOnExit(Screen::Gameplay),
-        ));
+        spawn_enemigo(&mut commands, *posicion);
     }
 }
 
@@ -127,7 +125,25 @@ fn spawn_recolectable(
     commands.spawn((
         Sprite::from_color(color, tamano),
         Transform::from_xyz(posicion.x, posicion.y, 0.5),
-        Recolectable { material },
+        Recolectable {
+            material,
+            respawn: Timer::from_seconds(RESPAWN_RECURSO, TimerMode::Once),
+        },
+        DespawnOnExit(Screen::Gameplay),
+    ));
+}
+
+fn spawn_enemigo(commands: &mut Commands, posicion: Vec2) {
+    commands.spawn((
+        Sprite::from_color(Color::srgb(0.70, 0.15, 0.15), Vec2::new(48.0, 64.0)),
+        Transform::from_xyz(posicion.x, posicion.y, 1.0),
+        Enemigo {
+            vida: VIDA_ENEMIGO,
+            vida_max: VIDA_ENEMIGO,
+            ataque: Timer::from_seconds(COOLDOWN_ENEMIGO, TimerMode::Repeating),
+            respawn: Timer::from_seconds(RESPAWN_ENEMIGO, TimerMode::Once),
+            posicion_original: posicion,
+        },
         DespawnOnExit(Screen::Gameplay),
     ));
 }
@@ -135,10 +151,9 @@ fn spawn_recolectable(
 fn recolectar(
     teclas: Res<ButtonInput<KeyCode>>,
     jugador: Query<&Transform, With<Jugador>>,
-    recursos: Query<(Entity, &Transform, &mut Recolectable)>,
+    mut recursos: Query<(Entity, &Transform, &mut Recolectable, &mut Visibility)>,
     mut inventario: ResMut<Inventario>,
     mut mensaje: ResMut<Mensaje>,
-    mut commands: Commands,
 ) {
     if !teclas.just_pressed(KeyCode::KeyE) {
         return;
@@ -150,7 +165,11 @@ fn recolectar(
     let mut posiciones = Vec::new();
     let mut entidades = Vec::new();
     let mut materiales = Vec::new();
-    for (entidad, transform, recurso) in &recursos {
+    for (entidad, transform, recurso, visibility) in &mut recursos {
+        // Only visible (not collected) resources
+        if matches!(*visibility, Visibility::Hidden) {
+            continue;
+        }
         posiciones.push(transform.translation.truncate());
         entidades.push(entidad);
         materiales.push(recurso.material);
@@ -161,7 +180,12 @@ fn recolectar(
         let material = materiales[indice];
         *inventario.materiales.entry(material).or_insert(0) += CANTIDAD_RECOLECTADA;
         mensaje.0 = format!("Recolectado: +{} {}", CANTIDAD_RECOLECTADA, material);
-        commands.entity(entidad).despawn();
+
+        // Hide the resource and schedule its respawn
+        if let Ok((_, _, mut recurso, mut visibility)) = recursos.get_mut(entidad) {
+            recurso.respawn.reset();
+            *visibility = Visibility::Hidden;
+        }
     } else {
         mensaje.0 = "No hay nada cerca para recolectar".to_string();
     }
@@ -187,10 +211,49 @@ fn ganar_exp(progreso: &mut Progreso, vida: &mut VidaJugador, cantidad: u32) -> 
     }
 }
 
+/// Check if a node can respawn given the elapsed time.
+fn puede_reaparecer(transcurrido: f32, tiempo_respawn: f32) -> bool {
+    transcurrido >= tiempo_respawn
+}
+
+/// Respawn resources and enemies individually.
+fn gestionar_respawn_individual(
+    tiempo: Res<Time>,
+    mut recursos: Query<(&mut Recolectable, &mut Visibility)>,
+    mut enemigos: Query<(&mut Enemigo, &mut Transform, &mut Visibility), With<Enemigo>>,
+) {
+    // Respawn resources
+    for (mut recurso, mut visibility) in &mut recursos {
+        if matches!(*visibility, Visibility::Hidden) {
+            recurso.respawn.tick(tiempo.delta());
+            if puede_reaparecer(recurso.respawn.elapsed_secs(), RESPAWN_RECURSO) {
+                *visibility = Visibility::Inherited;
+                recurso.respawn.reset();
+            }
+        }
+    }
+
+    // Respawn enemies (only those that died and are hidden)
+    for (mut enemigo, mut transform, mut visibility) in &mut enemigos {
+        if matches!(*visibility, Visibility::Hidden) {
+            enemigo.respawn.tick(tiempo.delta());
+            if puede_reaparecer(enemigo.respawn.elapsed_secs(), RESPAWN_ENEMIGO) {
+                // Respawn at the original position with full health
+                transform.translation.x = enemigo.posicion_original.x;
+                transform.translation.y = enemigo.posicion_original.y;
+                enemigo.vida = enemigo.vida_max;
+                enemigo.ataque.reset();
+                *visibility = Visibility::Inherited;
+                enemigo.respawn.reset();
+            }
+        }
+    }
+}
+
 /// Apply melee damage when the player hits the attack frame.
 fn aplicar_golpe(
     mut jugadores: Query<(&mut Jugador, &Transform)>,
-    mut enemigos: Query<(&Transform, &mut Enemigo)>,
+    mut enemigos: Query<(&Transform, &mut Enemigo, &mut Visibility)>,
     mut inventario: ResMut<Inventario>,
     mut progreso: ResMut<Progreso>,
     mut vida: ResMut<VidaJugador>,
@@ -214,7 +277,11 @@ fn aplicar_golpe(
     let pos_jugador = transform.translation.truncate();
 
     let mut en_rango = false;
-    for (transform, mut enemigo) in &mut enemigos {
+    for (transform, mut enemigo, mut visibility) in &mut enemigos {
+        // Skip hidden (dead) enemies
+        if matches!(*visibility, Visibility::Hidden) {
+            continue;
+        }
         if transform.translation.truncate().distance(pos_jugador) > ALCANCE_ATAQUE {
             continue;
         }
@@ -228,7 +295,9 @@ fn aplicar_golpe(
             texto.push_str(". El arma se ha roto!");
         }
         if enemigo.vida == 0 {
-            enemigo.vida = enemigo.vida_max;
+            // Schedule enemy respawn
+            *visibility = Visibility::Hidden;
+            enemigo.respawn.reset();
             *inventario
                 .materiales
                 .entry(Material::PiedraMagica)
@@ -303,7 +372,7 @@ fn aplicar_disparo(
 fn atacar_enemigo(
     tiempo: Res<Time>,
     jugador: Query<&Transform, With<Jugador>>,
-    mut enemigos: Query<(&Transform, &mut Enemigo)>,
+    mut enemigos: Query<(&Transform, &mut Enemigo, &Visibility)>,
     mut vida: ResMut<VidaJugador>,
     mut inventario: ResMut<Inventario>,
     mut mensaje: ResMut<Mensaje>,
@@ -312,7 +381,11 @@ fn atacar_enemigo(
         return;
     };
 
-    for (transform, mut enemigo) in &mut enemigos {
+    for (transform, mut enemigo, visibility) in &mut enemigos {
+        // Skip hidden (dead) enemies
+        if matches!(*visibility, Visibility::Hidden) {
+            continue;
+        }
         let cerca = transform.translation.truncate().distance(pos_jugador) <= ALCANCE_ENEMIGO;
         if !cerca {
             enemigo.ataque.reset();
@@ -348,7 +421,7 @@ fn mover_flechas(
     tiempo: Res<Time>,
     mut commands: Commands,
     mut flechas: Query<(Entity, &mut Flecha, &mut Transform), Without<Enemigo>>,
-    mut enemigos: Query<(&Transform, &mut Enemigo)>,
+    mut enemigos: Query<(&Transform, &mut Enemigo, &mut Visibility)>,
     mut progreso: ResMut<Progreso>,
     mut vida: ResMut<VidaJugador>,
     mut mensaje: ResMut<Mensaje>,
@@ -365,7 +438,11 @@ fn mover_flechas(
         transform.translation.y += paso.y;
 
         let pos_flecha = transform.translation.truncate();
-        for (transform_enemigo, mut enemigo) in &mut enemigos {
+        for (transform_enemigo, mut enemigo, mut visibility) in &mut enemigos {
+            // Skip hidden (dead) enemies
+            if matches!(*visibility, Visibility::Hidden) {
+                continue;
+            }
             let distancia = transform_enemigo.translation.truncate().distance(pos_flecha);
             if distancia <= 30.0 {
                 enemigo.vida = enemigo.vida.saturating_sub(flecha.dano);
@@ -373,7 +450,9 @@ fn mover_flechas(
 
                 let mut texto = format!("Flecha impacta: {} de dano", flecha.dano);
                 if enemigo.vida == 0 {
-                    enemigo.vida = enemigo.vida_max;
+                    // Schedule enemy respawn
+                    *visibility = Visibility::Hidden;
+                    enemigo.respawn.reset();
                     texto.push_str(&format!(". Enemigo derrotado! +{} exp", EXP_ENEMIGO));
                     if let Some(nivel) = ganar_exp(&mut progreso, &mut vida, EXP_ENEMIGO) {
                         texto.push_str(&format!(". Subes a nivel {}!", nivel));
@@ -386,57 +465,19 @@ fn mover_flechas(
     }
 }
 
-fn gestionar_respawn(
-    tiempo: Res<Time>,
-    mut commands: Commands,
-    mut spawns: ResMut<Spawns>,
-    recolectables: Query<Entity, With<Recolectable>>,
-    enemigos: Query<Entity, With<Enemigo>>,
-) {
-    let num_recolectables = recolectables.iter().count();
-    let num_enemigos = enemigos.iter().count();
-
-    // Si faltan recolectables o enemigos, activar el timer de respawn
-    if num_recolectables < spawns.recolectables.len() || num_enemigos < spawns.enemigos.len() {
-        spawns.needs_respawn = true;
-    }
-
-    if spawns.needs_respawn {
-        spawns.timer.tick(tiempo.delta());
-        if spawns.timer.just_finished() {
-            // Despawnear todo y respawnear
-            for entidad in &recolectables {
-                commands.entity(entidad).despawn();
-            }
-            for entidad in &enemigos {
-                commands.entity(entidad).despawn();
-            }
-            // Respawnear recolectables
-            for (material, posicion, tamano, color, etiqueta) in &spawns.recolectables {
-                spawn_recolectable(&mut commands, *material, *posicion, *tamano, *color, etiqueta);
-            }
-            // Respawnear enemigos
-            for posicion in &spawns.enemigos {
-                commands.spawn((
-                    Sprite::from_color(Color::srgb(0.70, 0.15, 0.15), Vec2::new(48.0, 64.0)),
-                    Transform::from_xyz(posicion.x, posicion.y, 1.0),
-                    Enemigo {
-                        vida: VIDA_ENEMIGO,
-                        vida_max: VIDA_ENEMIGO,
-                        ataque: Timer::from_seconds(COOLDOWN_ENEMIGO, TimerMode::Repeating),
-                    },
-                    DespawnOnExit(Screen::Gameplay),
-                ));
-            }
-            spawns.needs_respawn = false;
-            spawns.timer.reset();
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_puede_reaparecer() {
+        // Not enough time elapsed
+        assert!(!puede_reaparecer(5.0, 10.0));
+        // Exactly the respawn time
+        assert!(puede_reaparecer(10.0, 10.0));
+        // More than enough time elapsed
+        assert!(puede_reaparecer(12.5, 10.0));
+    }
 
     #[test]
     fn test_indice_mas_cercano_elige_mas_cercano() {

@@ -11,6 +11,7 @@ use crate::{
     recursos::hud::HudTextures,
     ui::{menus::Menu, screens::Screen, Mensaje},
 };
+#[cfg(test)]
 use crate::mundo::mundo::EXP_POR_NIVEL;
 
 /// Velocidad al caminar y al correr, en pixeles por segundo.
@@ -43,7 +44,6 @@ const ESTAMINA_W: f32 = 80.0 * S;
 const ESTAMINA_H: f32 = 8.0 * S;
 const MANA_W: f32 = 60.0 * S;
 const MANA_H: f32 = 6.0 * S;
-const XP_H: f32 = 6.0 * S;
 
 /// Drain stamina over time. Clamped between 0 and maximo.
 fn drenar_estamina(actual: f32, dt: f32, maximo: u32) -> f32 {
@@ -56,6 +56,7 @@ fn regenerar_estamina(actual: f32, dt: f32, maximo: u32) -> f32 {
 }
 
 /// Calculate XP progress ratio for the XP bar.
+#[cfg(test)]
 fn ratio_exp(exp: u32, nivel: u32) -> f32 {
     if nivel == 0 {
         return 0.0;
@@ -201,10 +202,6 @@ struct StaminaBarFill;
 #[derive(Component)]
 struct ManaBarFill;
 
-/// XP bar fill (blue bar)
-#[derive(Component)]
-struct XpBarFill;
-
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<VidaJugador>()
         .init_resource::<Progreso>()
@@ -258,9 +255,9 @@ fn spawn_hud(mut commands: Commands, hud_textures: Res<HudTextures>) {
         .spawn((
             Node {
                 position_type: PositionType::Absolute,
-                top: Val::Px(20.0),
+                bottom: Val::Px(60.0),
                 left: Val::Px(20.0),
-                width: Val::Px(MARCO_W + 150.0),
+                width: Val::Px(MARCO_W + 30.0 + ESTAMINA_W),
                 height: Val::Px(MARCO_H),
                 flex_direction: FlexDirection::Row,
                 align_items: AlignItems::Center,
@@ -271,7 +268,7 @@ fn spawn_hud(mut commands: Commands, hud_textures: Res<HudTextures>) {
             DespawnOnExit(Screen::Gameplay),
         ))
         .with_children(|p| {
-            // Orbe rojo de vida con marco (izquierda)
+            // Frame on the left
             p.spawn((
                 Node {
                     position_type: PositionType::Relative,
@@ -280,9 +277,9 @@ fn spawn_hud(mut commands: Commands, hud_textures: Res<HudTextures>) {
                     ..default()
                 },
             ))
-            .with_children(|orbe| {
-                // Marco
-                orbe.spawn((
+            .with_children(|marco| {
+                // Frame
+                marco.spawn((
                     ImageNode::new(hud_textures.hp_bar.clone()),
                     Node {
                         position_type: PositionType::Absolute,
@@ -291,8 +288,8 @@ fn spawn_hud(mut commands: Commands, hud_textures: Res<HudTextures>) {
                         ..default()
                     },
                 ));
-                // Orbe rojo container (altura la cambia actualizar_hud)
-                orbe.spawn((
+                // Red orb container (actualizar_hud changes its height)
+                marco.spawn((
                     Node {
                         position_type: PositionType::Absolute,
                         left: Val::Px((MARCO_W - ORBE_W) / 2.0),
@@ -319,7 +316,7 @@ fn spawn_hud(mut commands: Commands, hud_textures: Res<HudTextures>) {
                 });
             });
 
-            // Barras a la derecha (estamina, maná y XP) en columnas
+            // Bars on the right (stamina and mana) in a column
             p.spawn((
                 Node {
                     position_type: PositionType::Relative,
@@ -330,39 +327,84 @@ fn spawn_hud(mut commands: Commands, hud_textures: Res<HudTextures>) {
                 },
             ))
             .with_children(|barras| {
-                // Barra amarilla de estamina (ancho lo cambia actualizar_hud)
-                barras.spawn((
-                    ImageNode::new(hud_textures.yellow_bar.clone()),
-                    Node {
-                        position_type: PositionType::Relative,
-                        width: Val::Px(ESTAMINA_W),
-                        height: Val::Px(ESTAMINA_H),
-                        ..default()
-                    },
-                    StaminaBarFill,
-                ));
-                // Barra azul de maná (ancho lo cambia actualizar_hud)
-                barras.spawn((
-                    ImageNode::new(hud_textures.blue_bar.clone()),
-                    Node {
-                        position_type: PositionType::Relative,
-                        width: Val::Px(MANA_W),
-                        height: Val::Px(MANA_H),
-                        ..default()
-                    },
-                    ManaBarFill,
-                ));
-                // Barra azul de XP (ancho lo cambia actualizar_hud)
-                barras.spawn((
-                    ImageNode::new(hud_textures.blue_bar.clone()),
-                    Node {
-                        position_type: PositionType::Relative,
-                        width: Val::Px(MANA_W),
-                        height: Val::Px(XP_H),
-                        ..default()
-                    },
-                    XpBarFill,
-                ));
+                // Stamina bar: fixed-size slot with a clipped fill on top
+                barras
+                    .spawn((
+                        Node {
+                            position_type: PositionType::Relative,
+                            width: Val::Px(ESTAMINA_W),
+                            height: Val::Px(ESTAMINA_H),
+                            ..default()
+                        },
+                    ))
+                    .with_children(|slot| {
+                        // Clipped fill: width is a percent of the slot, set by actualizar_hud
+                        slot.spawn((
+                            Node {
+                                position_type: PositionType::Absolute,
+                                left: Val::Px(0.0),
+                                top: Val::Px(0.0),
+                                width: Val::Percent(100.0),
+                                height: Val::Percent(100.0),
+                                overflow: Overflow::clip(),
+                                ..default()
+                            },
+                            StaminaBarFill,
+                        ))
+                        .with_children(|clip| {
+                            // Full-size image; never resized so segments are preserved
+                            clip.spawn((
+                                ImageNode::new(hud_textures.yellow_bar.clone()),
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    width: Val::Px(ESTAMINA_W),
+                                    height: Val::Px(ESTAMINA_H),
+                                    left: Val::Px(0.0),
+                                    top: Val::Px(0.0),
+                                    ..default()
+                                },
+                            ));
+                        });
+                    });
+                // Mana bar: fixed-size slot with a clipped fill on top
+                barras
+                    .spawn((
+                        Node {
+                            position_type: PositionType::Relative,
+                            width: Val::Px(MANA_W),
+                            height: Val::Px(MANA_H),
+                            ..default()
+                        },
+                    ))
+                    .with_children(|slot| {
+                        // Clipped fill: width is a percent of the slot, set by actualizar_hud
+                        slot.spawn((
+                            Node {
+                                position_type: PositionType::Absolute,
+                                left: Val::Px(0.0),
+                                top: Val::Px(0.0),
+                                width: Val::Percent(100.0),
+                                height: Val::Percent(100.0),
+                                overflow: Overflow::clip(),
+                                ..default()
+                            },
+                            ManaBarFill,
+                        ))
+                        .with_children(|clip| {
+                            // Full-size image; never resized so segments are preserved
+                            clip.spawn((
+                                ImageNode::new(hud_textures.blue_bar.clone()),
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    width: Val::Px(MANA_W),
+                                    height: Val::Px(MANA_H),
+                                    left: Val::Px(0.0),
+                                    top: Val::Px(0.0),
+                                    ..default()
+                                },
+                            ));
+                        });
+                    });
             });
         });
 }
@@ -673,22 +715,17 @@ fn actualizar_hud(
     vida: Res<VidaJugador>,
     estamina: Res<Estamina>,
     mana: Res<Mana>,
-    progreso: Res<Progreso>,
     mut vida_nodos: Query<
         &mut Node,
-        (With<HealthBarFill>, Without<StaminaBarFill>, Without<ManaBarFill>, Without<XpBarFill>),
+        (With<HealthBarFill>, Without<StaminaBarFill>, Without<ManaBarFill>),
     >,
     mut estamina_nodos: Query<
         &mut Node,
-        (With<StaminaBarFill>, Without<HealthBarFill>, Without<ManaBarFill>, Without<XpBarFill>),
+        (With<StaminaBarFill>, Without<HealthBarFill>, Without<ManaBarFill>),
     >,
     mut mana_nodos: Query<
         &mut Node,
-        (With<ManaBarFill>, Without<HealthBarFill>, Without<StaminaBarFill>, Without<XpBarFill>),
-    >,
-    mut xp_nodos: Query<
-        &mut Node,
-        (With<XpBarFill>, Without<HealthBarFill>, Without<StaminaBarFill>, Without<ManaBarFill>),
+        (With<ManaBarFill>, Without<HealthBarFill>, Without<StaminaBarFill>),
     >,
 ) {
     if vida.is_changed() {
@@ -709,7 +746,7 @@ fn actualizar_hud(
             0.0
         };
         for mut node in &mut estamina_nodos {
-            node.width = Val::Px(ESTAMINA_W * ratio);
+            node.width = Val::Percent(ratio * 100.0);
         }
     }
 
@@ -720,14 +757,7 @@ fn actualizar_hud(
             0.0
         };
         for mut node in &mut mana_nodos {
-            node.width = Val::Px(MANA_W * ratio);
-        }
-    }
-
-    if progreso.is_changed() {
-        let ratio = ratio_exp(progreso.exp, progreso.nivel);
-        for mut node in &mut xp_nodos {
-            node.width = Val::Px(MANA_W * ratio);
+            node.width = Val::Percent(ratio * 100.0);
         }
     }
 }
