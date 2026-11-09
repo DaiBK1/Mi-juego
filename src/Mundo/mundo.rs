@@ -219,8 +219,8 @@ fn puede_reaparecer(transcurrido: f32, tiempo_respawn: f32) -> bool {
 /// Respawn resources and enemies individually.
 fn gestionar_respawn_individual(
     tiempo: Res<Time>,
-    mut recursos: Query<(&mut Recolectable, &mut Visibility)>,
-    mut enemigos: Query<(&mut Enemigo, &mut Transform, &mut Visibility), With<Enemigo>>,
+    mut recursos: Query<(&mut Recolectable, &mut Visibility), Without<Enemigo>>,
+    mut enemigos: Query<(&mut Enemigo, &mut Transform, &mut Visibility), (With<Enemigo>, Without<Recolectable>)>,
 ) {
     // Respawn resources
     for (mut recurso, mut visibility) in &mut recursos {
