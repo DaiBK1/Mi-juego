@@ -8,6 +8,17 @@ use crate::ui::screens::gameplay::VidaJugador;
 use crate::ui::screens::gameplay::Progreso;
 use crate::ui::screens::Screen;
 
+/// Returns the index of the closest point within `alcance`, if any.
+pub fn indice_mas_cercano(origen: Vec2, puntos: &[Vec2], alcance: f32) -> Option<usize> {
+    puntos
+        .iter()
+        .enumerate()
+        .map(|(i, p)| (i, origen.distance(*p)))
+        .filter(|(_, d)| *d <= alcance)
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(i, _)| i)
+}
+
 const ALCANCE_RECOLECTAR: f32 = 90.0;
 const ALCANCE_ATAQUE: f32 = 110.0;
 const ALCANCE_ENEMIGO: f32 = 80.0;
@@ -15,8 +26,8 @@ const CANTIDAD_RECOLECTADA: u32 = 2;
 const VIDA_ENEMIGO: u32 = 100;
 const DANO_ENEMIGO: u32 = 12;
 const COOLDOWN_ENEMIGO: f32 = 1.5;
-const EXP_ENEMIGO: u32 = 40;
-const EXP_POR_NIVEL: u32 = 100;
+pub(crate) const EXP_ENEMIGO: u32 = 40;
+pub(crate) const EXP_POR_NIVEL: u32 = 100;
 const VIDA_POR_NIVEL: u32 = 10;
 const TIEMPO_RESPAWN: f32 = 30.0;
 
@@ -124,7 +135,7 @@ fn spawn_recolectable(
 fn recolectar(
     teclas: Res<ButtonInput<KeyCode>>,
     jugador: Query<&Transform, With<Jugador>>,
-    mut recursos: Query<(Entity, &Transform, &mut Recolectable)>,
+    recursos: Query<(Entity, &Transform, &mut Recolectable)>,
     mut inventario: ResMut<Inventario>,
     mut mensaje: ResMut<Mensaje>,
     mut commands: Commands,
@@ -136,16 +147,18 @@ fn recolectar(
         return;
     };
 
-    let mut cercano: Option<(Entity, Material)> = None;
-    for (entidad, transform, recurso) in &mut recursos {
-        let distancia = transform.translation.truncate().distance(pos_jugador);
-        if distancia <= ALCANCE_RECOLECTAR {
-            cercano = Some((entidad, recurso.material));
-            break;
-        }
+    let mut posiciones = Vec::new();
+    let mut entidades = Vec::new();
+    let mut materiales = Vec::new();
+    for (entidad, transform, recurso) in &recursos {
+        posiciones.push(transform.translation.truncate());
+        entidades.push(entidad);
+        materiales.push(recurso.material);
     }
 
-    if let Some((entidad, material)) = cercano {
+    if let Some(indice) = indice_mas_cercano(pos_jugador, &posiciones, ALCANCE_RECOLECTAR) {
+        let entidad = entidades[indice];
+        let material = materiales[indice];
         *inventario.materiales.entry(material).or_insert(0) += CANTIDAD_RECOLECTADA;
         mensaje.0 = format!("Recolectado: +{} {}", CANTIDAD_RECOLECTADA, material);
         commands.entity(entidad).despawn();
@@ -418,5 +431,48 @@ fn gestionar_respawn(
             spawns.needs_respawn = false;
             spawns.timer.reset();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_indice_mas_cercano_elige_mas_cercano() {
+        let origen = Vec2::new(0.0, 0.0);
+        let puntos = vec![
+            Vec2::new(50.0, 0.0),
+            Vec2::new(10.0, 0.0),
+            Vec2::new(30.0, 0.0),
+        ];
+        let alcance = 100.0;
+        let resultado = indice_mas_cercano(origen, &puntos, alcance);
+        assert_eq!(resultado, Some(1)); // Índice 1 es el más cercano (10.0)
+    }
+
+    #[test]
+    fn test_indice_mas_cercano_none_si_ninguno_en_rango() {
+        let origen = Vec2::new(0.0, 0.0);
+        let puntos = vec![
+            Vec2::new(200.0, 0.0),
+            Vec2::new(300.0, 0.0),
+        ];
+        let alcance = 100.0;
+        let resultado = indice_mas_cercano(origen, &puntos, alcance);
+        assert_eq!(resultado, None);
+    }
+
+    #[test]
+    fn test_indice_mas_cercano_un_solo_en_rango() {
+        let origen = Vec2::new(0.0, 0.0);
+        let puntos = vec![
+            Vec2::new(50.0, 0.0),
+            Vec2::new(200.0, 0.0),
+            Vec2::new(300.0, 0.0),
+        ];
+        let alcance = 100.0;
+        let resultado = indice_mas_cercano(origen, &puntos, alcance);
+        assert_eq!(resultado, Some(0)); // Solo el primero está en rango
     }
 }

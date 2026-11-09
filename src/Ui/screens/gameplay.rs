@@ -11,6 +11,7 @@ use crate::{
     recursos::hud::HudTextures,
     ui::{menus::Menu, screens::Screen, Mensaje},
 };
+use crate::mundo::mundo::EXP_POR_NIVEL;
 
 /// Velocidad al caminar y al correr, en pixeles por segundo.
 const VELOCIDAD: f32 = 300.0;
@@ -32,6 +33,17 @@ const DRENAJE_ESTAMINA: f32 = 30.0;
 const REGENERACION_ESTAMINA: f32 = 15.0;
 /// Tiempo de recarga del arco en segundos.
 const RECARGA_ARCO: f32 = 1.0;
+/// HUD dimensions.
+const S: f32 = 3.0;
+const MARCO_W: f32 = 116.0 * S;
+const MARCO_H: f32 = 64.0 * S;
+const ORBE_W: f32 = 56.0 * S;
+const ORBE_H: f32 = 54.0 * S;
+const ESTAMINA_W: f32 = 80.0 * S;
+const ESTAMINA_H: f32 = 8.0 * S;
+const MANA_W: f32 = 60.0 * S;
+const MANA_H: f32 = 6.0 * S;
+const XP_H: f32 = 6.0 * S;
 
 /// Drain stamina over time. Clamped between 0 and maximo.
 fn drenar_estamina(actual: f32, dt: f32, maximo: u32) -> f32 {
@@ -41,6 +53,15 @@ fn drenar_estamina(actual: f32, dt: f32, maximo: u32) -> f32 {
 /// Regenerate stamina over time. Clamped between 0 and maximo.
 fn regenerar_estamina(actual: f32, dt: f32, maximo: u32) -> f32 {
     (actual + REGENERACION_ESTAMINA * dt).max(0.0).min(maximo as f32)
+}
+
+/// Calculate XP progress ratio for the XP bar.
+fn ratio_exp(exp: u32, nivel: u32) -> f32 {
+    if nivel == 0 {
+        return 0.0;
+    }
+    let requerido = nivel * EXP_POR_NIVEL;
+    (exp as f32 / requerido as f32).clamp(0.0, 1.0)
 }
 
 /// Vida del jugador que muestra la barra roja del HUD.
@@ -116,11 +137,8 @@ impl Default for Estamina {
 
 /// Maná del jugador que muestra la barra azul del HUD.
 #[derive(Resource)]
-#[allow(dead_code)]
 pub struct Mana {
-    #[allow(dead_code)]
     pub actual: u32,
-    #[allow(dead_code)]
     pub maximo: u32,
 }
 
@@ -183,6 +201,10 @@ struct StaminaBarFill;
 #[derive(Component)]
 struct ManaBarFill;
 
+/// XP bar fill (blue bar)
+#[derive(Component)]
+struct XpBarFill;
+
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<VidaJugador>()
         .init_resource::<Progreso>()
@@ -232,16 +254,6 @@ fn spawn_inicial(
 
 /// Spawn HUD elements: red orb on left, bars on right
 fn spawn_hud(mut commands: Commands, hud_textures: Res<HudTextures>) {
-    const S: f32 = 3.0;
-    const MARCO_W: f32 = 116.0 * S;
-    const MARCO_H: f32 = 64.0 * S;
-    const ORBE_W: f32 = 56.0 * S;
-    const ORBE_H: f32 = 54.0 * S;
-    const ESTAMINA_W: f32 = 80.0 * S;
-    const ESTAMINA_H: f32 = 8.0 * S;
-    const MANA_W: f32 = 60.0 * S;
-    const MANA_H: f32 = 6.0 * S;
-
     commands
         .spawn((
             Node {
@@ -279,22 +291,35 @@ fn spawn_hud(mut commands: Commands, hud_textures: Res<HudTextures>) {
                         ..default()
                     },
                 ));
-                // Orbe rojo (altura la cambia actualizar_hud)
+                // Orbe rojo container (altura la cambia actualizar_hud)
                 orbe.spawn((
-                    ImageNode::new(hud_textures.red_bar.clone()),
                     Node {
                         position_type: PositionType::Absolute,
                         left: Val::Px((MARCO_W - ORBE_W) / 2.0),
-                        top: Val::Px((MARCO_H - ORBE_H) / 2.0),
+                        bottom: Val::Px((MARCO_H - ORBE_H) / 2.0),
                         width: Val::Px(ORBE_W),
                         height: Val::Px(ORBE_H),
+                        overflow: Overflow::clip(),
                         ..default()
                     },
                     HealthBarFill,
-                ));
+                ))
+                .with_children(|contenedor| {
+                    // Red orb image, anchored to bottom
+                    contenedor.spawn((
+                        ImageNode::new(hud_textures.red_bar.clone()),
+                        Node {
+                            position_type: PositionType::Absolute,
+                            width: Val::Px(ORBE_W),
+                            height: Val::Px(ORBE_H),
+                            bottom: Val::Px(0.0),
+                            ..default()
+                        },
+                    ));
+                });
             });
 
-            // Barras a la derecha (estamina y maná) en columnas
+            // Barras a la derecha (estamina, maná y XP) en columnas
             p.spawn((
                 Node {
                     position_type: PositionType::Relative,
@@ -326,6 +351,17 @@ fn spawn_hud(mut commands: Commands, hud_textures: Res<HudTextures>) {
                         ..default()
                     },
                     ManaBarFill,
+                ));
+                // Barra azul de XP (ancho lo cambia actualizar_hud)
+                barras.spawn((
+                    ImageNode::new(hud_textures.blue_bar.clone()),
+                    Node {
+                        position_type: PositionType::Relative,
+                        width: Val::Px(MANA_W),
+                        height: Val::Px(XP_H),
+                        ..default()
+                    },
+                    XpBarFill,
                 ));
             });
         });
@@ -636,13 +672,23 @@ fn actualizar_recarga(time: Res<Time>, mut recarga: ResMut<Recarga>) {
 fn actualizar_hud(
     vida: Res<VidaJugador>,
     estamina: Res<Estamina>,
+    mana: Res<Mana>,
+    progreso: Res<Progreso>,
     mut vida_nodos: Query<
         &mut Node,
-        (With<HealthBarFill>, Without<StaminaBarFill>, Without<ManaBarFill>),
+        (With<HealthBarFill>, Without<StaminaBarFill>, Without<ManaBarFill>, Without<XpBarFill>),
     >,
     mut estamina_nodos: Query<
         &mut Node,
-        (With<StaminaBarFill>, Without<HealthBarFill>, Without<ManaBarFill>),
+        (With<StaminaBarFill>, Without<HealthBarFill>, Without<ManaBarFill>, Without<XpBarFill>),
+    >,
+    mut mana_nodos: Query<
+        &mut Node,
+        (With<ManaBarFill>, Without<HealthBarFill>, Without<StaminaBarFill>, Without<XpBarFill>),
+    >,
+    mut xp_nodos: Query<
+        &mut Node,
+        (With<XpBarFill>, Without<HealthBarFill>, Without<StaminaBarFill>, Without<ManaBarFill>),
     >,
 ) {
     if vida.is_changed() {
@@ -652,7 +698,7 @@ fn actualizar_hud(
             0.0
         };
         for mut node in &mut vida_nodos {
-            node.height = Val::Px(54.0 * 3.0 * ratio);
+            node.height = Val::Px(ORBE_H * ratio);
         }
     }
 
@@ -663,7 +709,25 @@ fn actualizar_hud(
             0.0
         };
         for mut node in &mut estamina_nodos {
-            node.width = Val::Px(80.0 * 3.0 * ratio);
+            node.width = Val::Px(ESTAMINA_W * ratio);
+        }
+    }
+
+    if mana.is_changed() {
+        let ratio = if mana.maximo > 0 {
+            (mana.actual as f32 / mana.maximo as f32).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        for mut node in &mut mana_nodos {
+            node.width = Val::Px(MANA_W * ratio);
+        }
+    }
+
+    if progreso.is_changed() {
+        let ratio = ratio_exp(progreso.exp, progreso.nivel);
+        for mut node in &mut xp_nodos {
+            node.width = Val::Px(MANA_W * ratio);
         }
     }
 }
@@ -772,5 +836,35 @@ mod tests {
         let resultado = regenerar_estamina(actual, dt, maximo);
         // Cannot exceed maximo
         assert_eq!(resultado, 100.0);
+    }
+
+    #[test]
+    fn test_ratio_exp_exp_0() {
+        let ratio = ratio_exp(0, 1);
+        assert_eq!(ratio, 0.0);
+    }
+
+    #[test]
+    fn test_ratio_exp_mitad() {
+        let ratio = ratio_exp(50, 1);
+        assert_eq!(ratio, 0.5);
+    }
+
+    #[test]
+    fn test_ratio_exp_completo() {
+        let ratio = ratio_exp(100, 1);
+        assert_eq!(ratio, 1.0);
+    }
+
+    #[test]
+    fn test_ratio_exp_mas_que_requerido() {
+        let ratio = ratio_exp(150, 1);
+        assert_eq!(ratio, 1.0); // Clamp a 1.0
+    }
+
+    #[test]
+    fn test_ratio_exp_nivel_cero() {
+        let ratio = ratio_exp(50, 0);
+        assert_eq!(ratio, 0.0);
     }
 }
